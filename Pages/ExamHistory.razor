@@ -1,0 +1,294 @@
+@page "/exam-history"
+@using MathExamWeb.Data.Services
+@using MathExamWeb.Data.Models
+@inject StatisticsService StatsService
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📚 历次测试记录</h2>
+        <a class="btn btn-outline-secondary" href="/">返回首页</a>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-2">正在加载测试记录...</p>
+        </div>
+    }
+    else
+    {
+        <!-- 筛选区域 -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label">📖 科目筛选</label>
+                        <select class="form-select" @bind="SelectedSubject" @bind:event="onchange" @bind:after="ApplyFilter">
+                            <option value="">全部科目</option>
+                            <option value="chinese">语文</option>
+                            <option value="math">数学</option>
+                        </select>
+                    </div>
+                    <div class="col-md-9">
+                        <div class="text-muted">
+                            共 <strong>@FilteredRecords.Count</strong> 条记录
+                            @if (!string.IsNullOrEmpty(SelectedSubject))
+                            {
+                                <span>（已筛选）</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (!FilteredRecords.Any())
+        {
+            <div class="alert alert-info text-center">
+                <h4>📝 暂无测试记录</h4>
+                <p>完成至少一次测试后，这里将显示你的所有测试记录。</p>
+                <a class="btn btn-primary me-2" href="/chinese">语文测试</a>
+                <a class="btn btn-success" href="/math">数学测试</a>
+            </div>
+        }
+        else
+        {
+            <!-- 测试记录列表 -->
+            <div class="accordion" id="examHistoryAccordion">
+                @foreach (var (record, index) in FilteredRecords.Select((r, i) => (r, i)))
+                {
+                    var recordId = $"record-{index}";
+                    var subjectName = record.Subject == "chinese" ? "语文" : "数学";
+                    var subjectColor = record.Subject == "chinese" ? "info" : "success";
+                    var accuracyColor = GetAccuracyColor(record.AccuracyRate);
+
+                    <div class="accordion-item mb-2">
+                        <h2 class="accordion-header" id="heading-@recordId">
+                            <button class="accordion-button collapsed" type="button"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#collapse-@recordId"
+                                    aria-expanded="false"
+                                    aria-controls="collapse-@recordId">
+                                <div class="d-flex justify-content-between align-items-center w-100 me-3">
+                                    <div class="d-flex align-items-center gap-3">
+                                        <span class="badge bg-@subjectColor fs-6">@subjectName</span>
+                                        <span class="text-muted">@record.EndTime.ToString("yyyy-MM-dd HH:mm")</span>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-4">
+                                        <span>
+                                            <strong class="text-primary">@record.Score</strong>
+                                            <span class="text-muted">/@(record.TotalQuestions * 10)分</span>
+                                        </span>
+                                        <span class="badge bg-@accuracyColor">
+                                            正确率 @((record.AccuracyRate * 100).ToString("F1"))%
+                                        </span>
+                                        <span class="text-muted">
+                                            @record.TotalQuestions 题 | @GetDifficultyText(record.Difficulty)
+                                        </span>
+                                    </div>
+                                </div>
+                            </button>
+                        </h2>
+                        <div id="collapse-@recordId"
+                             class="accordion-collapse collapse"
+                             aria-labelledby="heading-@recordId"
+                             data-bs-parent="#examHistoryAccordion">
+                            <div class="accordion-body">
+                                <!-- 考试摘要 -->
+                                <div class="row g-3 mb-4">
+                                    <div class="col-md-3">
+                                        <div class="card text-center">
+                                            <div class="card-body">
+                                                <small class="text-muted">总题数</small>
+                                                <h4 class="mb-0">@record.TotalQuestions</h4>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card text-center">
+                                            <div class="card-body">
+                                                <small class="text-muted">答对</small>
+                                                <h4 class="mb-0 text-success">@record.CorrectCount</h4>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card text-center">
+                                            <div class="card-body">
+                                                <small class="text-muted">答错</small>
+                                                <h4 class="mb-0 text-danger">@(record.TotalQuestions - record.CorrectCount)</h4>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card text-center">
+                                            <div class="card-body">
+                                                <small class="text-muted">用时</small>
+                                                <h4 class="mb-0">@GetDuration(record)</h4>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 答题详情 -->
+                                <h5 class="mb-3">📋 答题详情</h5>
+                                <div class="table-responsive">
+                                    <table class="table table-bordered table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="width: 5%">序号</th>
+                                                <th style="width: 35%">题目</th>
+                                                <th style="width: 15%">你的答案</th>
+                                                <th style="width: 15%">正确答案</th>
+                                                <th style="width: 10%">分类</th>
+                                                <th style="width: 10%">结果</th>
+                                                <th style="width: 10%">用时</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var (answer, idx) in record.Answers.Select((a, i) => (a, i + 1)))
+                                            {
+                                                <tr class="@(answer.IsCorrect ? "" : "table-danger")">
+                                                    <td class="text-center">@idx</td>
+                                                    <td>
+                                                        <div class="text-truncate" style="max-width: 400px;" title="@answer.QuestionText">
+                                                            @answer.QuestionText
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <span class="@(answer.IsCorrect ? "text-success" : "text-danger")">
+                                                            <strong>@answer.UserAnswer</strong>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span class="text-success">
+                                                            @answer.CorrectAnswer
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge bg-secondary">@answer.Category</span>
+                                                    </td>
+                                                    <td class="text-center">
+                                                        @if (answer.IsCorrect)
+                                                        {
+                                                            <span class="badge bg-success">✓ 正确</span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge bg-danger">✗ 错误</span>
+                                                        }
+                                                    </td>
+                                                    <td class="text-center text-muted">
+                                                        @if (answer.AnsweredAt != DateTime.MinValue)
+                                                        {
+                                                            <small>@answer.AnsweredAt.ToString("HH:mm:ss")</small>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private List<ExamRecord> AllRecords = new();
+    private List<ExamRecord> FilteredRecords = new();
+    private bool IsLoading = true;
+    private string SelectedSubject = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            AllRecords = await StatsService.GetAllRecords();
+            // 按时间倒序排列（最新的在前）
+            AllRecords = AllRecords.OrderByDescending(r => r.EndTime).ToList();
+            FilterRecords();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载测试记录失败: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        FilterRecords();
+    }
+
+    private void FilterRecords()
+    {
+        if (string.IsNullOrEmpty(SelectedSubject))
+        {
+            FilteredRecords = AllRecords;
+        }
+        else
+        {
+            FilteredRecords = AllRecords.Where(r => r.Subject == SelectedSubject).ToList();
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        FilterRecords();
+        StateHasChanged();
+    }
+
+    private string GetDifficultyText(DifficultyLevel? difficulty)
+    {
+        return difficulty switch
+        {
+            DifficultyLevel.Easy => "简单",
+            DifficultyLevel.Medium => "中等",
+            DifficultyLevel.Hard => "困难",
+            _ => "随机"
+        };
+    }
+
+    private string GetAccuracyColor(double accuracy)
+    {
+        if (accuracy >= 0.9) return "success";
+        if (accuracy >= 0.8) return "primary";
+        if (accuracy >= 0.7) return "info";
+        if (accuracy >= 0.6) return "warning";
+        return "danger";
+    }
+
+    private string GetDuration(ExamRecord record)
+    {
+        if (record.EndTime == DateTime.MinValue || record.StartTime == DateTime.MinValue)
+        {
+            return "-";
+        }
+
+        var duration = record.EndTime - record.StartTime;
+        if (duration.TotalMinutes >= 60)
+        {
+            return $"{(int)duration.TotalHours}时{duration.Minutes}分";
+        }
+        else if (duration.TotalMinutes >= 1)
+        {
+            return $"{(int)duration.TotalMinutes}分{duration.Seconds}秒";
+        }
+        else
+        {
+            return $"{duration.Seconds}秒";
+        }
+    }
+}

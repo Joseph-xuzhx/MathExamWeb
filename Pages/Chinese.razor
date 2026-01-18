@@ -1,0 +1,364 @@
+@page "/chinese"
+@using MathExamWeb.Data
+@using MathExamWeb.Data.Models
+@using MathExamWeb.Data.Services
+@using MathExamWeb.Data.Services.Interfaces
+@using System.Text.Json
+@inherits MathExamWeb.Components.Base.BaseExamComponent<ChineseQuestionService>
+
+<div class="container">
+    <div class="exam-card">
+        <div class="text-center mb-4">
+            <h1 class="display-6">温州市鹿城区小学六年级<br/>@GetSubjectName()智能考场</h1>
+            @if (Started)
+            {
+                <div class="score-board mt-3">
+                    得分：@Score / @(TargetCount * 10)（进度 @Asked.Count/@TargetCount）
+                </div>
+                <div class="mt-2">
+                    <button class="btn btn-outline-warning btn-sm me-2" @onclick="ResetToStart">重新开始</button>
+                    <a class="btn btn-outline-secondary btn-sm" href="/">返回选择</a>
+                </div>
+            }
+        </div>
+
+        @if (!Started)
+        {
+            <div class="p-4 border rounded bg-light">
+                <div class="mb-3">
+                    <label class="form-label">选择考试模式</label>
+                    <div class="btn-group d-flex mb-2" role="group">
+                        <input type="radio" class="btn-check" name="examMode" id="modeSequential"
+                               checked="@(SelectedExamMode == ExamMode.Sequential)"
+                               @onclick="@(() => SelectedExamMode = ExamMode.Sequential)" />
+                        <label class="btn btn-outline-info" for="modeSequential">
+                            📝 逐题模式<br/>
+                            <small class="text-muted">一题一题做，即时查看结果</small>
+                        </label>
+
+                        <input type="radio" class="btn-check" name="examMode" id="modePaper"
+                               checked="@(SelectedExamMode == ExamMode.Paper)"
+                               @onclick="@(() => SelectedExamMode = ExamMode.Paper)" />
+                        <label class="btn btn-outline-warning" for="modePaper">
+                            📄 试卷模式<br/>
+                            <small class="text-muted">一次性完成所有题目后统一提交</small>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">选择难度级别</label>
+                    <div class="btn-group d-flex" role="group">
+                        <input type="radio" class="btn-check" name="difficulty" id="diffEasy"
+                               checked="@(SelectedDifficulty == DifficultyLevel.Easy)"
+                               @onclick="@(() => SelectedDifficulty = DifficultyLevel.Easy)" />
+                        <label class="btn btn-outline-success" for="diffEasy">简单</label>
+
+                        <input type="radio" class="btn-check" name="difficulty" id="diffMedium"
+                               checked="@(SelectedDifficulty == DifficultyLevel.Medium)"
+                               @onclick="@(() => SelectedDifficulty = DifficultyLevel.Medium)" />
+                        <label class="btn btn-outline-primary" for="diffMedium">中等</label>
+
+                        <input type="radio" class="btn-check" name="difficulty" id="diffHard"
+                               checked="@(SelectedDifficulty == DifficultyLevel.Hard)"
+                               @onclick="@(() => SelectedDifficulty = DifficultyLevel.Hard)" />
+                        <label class="btn btn-outline-danger" for="diffHard">困难</label>
+
+                        <input type="radio" class="btn-check" name="difficulty" id="diffRandom"
+                               checked="@(SelectedDifficulty == null)"
+                               @onclick="@(() => SelectedDifficulty = null)" />
+                        <label class="btn btn-outline-secondary" for="diffRandom">随机</label>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">设定本次测试题目数量</label>
+                    <input type="number" class="form-control" min="1" max="50" @bind="TargetCount" />
+                </div>
+
+                <button class="btn btn-primary btn-lg" @onclick="StartExam">开始测试</button>
+                <a class="btn btn-outline-secondary btn-lg ms-2" href="/">返回选择</a>
+            </div>
+        }
+        else if (Finished)
+        {
+            <div class="p-4 border rounded bg-light">
+                <h4>本次测试已完成</h4>
+                <p class="fs-5">总分：<strong>@Score</strong> / @(TargetCount * 10)</p>
+                <p>正确率：<strong>@((Asked.Count(a => a.Correct) * 100.0 / Asked.Count).ToString("F1"))%</strong></p>
+
+                <div class="d-flex flex-wrap gap-2 mt-3">
+                    <button class="btn btn-success" @onclick="StartExam">重新开始</button>
+                    <button class="btn btn-outline-primary" @onclick="ToggleReview">查看复习列表</button>
+                    <a class="btn btn-outline-info" href="/exam-history">📝 历次记录</a>
+                    <a class="btn btn-info" href="/statistics/@GetStoragePrefix()">📊 统计报告</a>
+                    <a class="btn btn-warning" href="/wrong-questions/@GetStoragePrefix()">📖 错题本</a>
+                </div>
+
+                @if (ShowReview)
+                {
+                    <div class="mt-3">
+                        <h5>本次试题回顾</h5>
+                        @foreach (var item in Asked)
+                        {
+                            <div class="border rounded p-3 mb-2">
+                                <div><strong>题目：</strong>@item.Q.Text</div>
+                                <div><strong>正确答案：</strong>@item.Q.CorrectAnswer</div>
+                                <div><strong>你的答案：</strong>@item.User</div>
+                                <div><strong>是否正确：</strong>@(item.Correct ? "是" : "否")</div>
+                                <div class="mt-2">@item.Q.Explanation</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else if (SelectedExamMode == ExamMode.Paper && AllQuestions.Any())
+        {
+            <!-- 试卷模式：显示所有题目 -->
+            <div class="paper-mode-section">
+                @if (!PaperSubmitted)
+                {
+                    <div class="alert alert-info">
+                        <strong>📄 试卷模式</strong> - 请完成所有题目后点击"提交试卷"按钮统一批改
+                    </div>
+
+                    @for (int i = 0; i < AllQuestions.Count; i++)
+                    {
+                        var index = i; // 闭包变量
+                        var question = AllQuestions[i];
+
+                        <div class="card mb-3">
+                            <div class="card-header bg-light">
+                                <strong>第 @(i + 1) 题</strong>
+                                @if (question.Type == QuestionType.MultipleChoice)
+                                {
+                                    <span class="badge bg-info ms-2">选择题</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success ms-2">填空题</span>
+                                }
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">@question.Text</p>
+
+                                @if (question.Type == QuestionType.MultipleChoice)
+                                {
+                                    <!-- 选择题：显示选项 -->
+                                    <div class="list-group">
+                                        @for (int optIdx = 0; optIdx < question.ShuffledOptions.Count; optIdx++)
+                                        {
+                                            var option = question.ShuffledOptions[optIdx];
+                                            var letter = ((char)('A' + optIdx)).ToString();
+                                            <label class="list-group-item list-group-item-action" style="cursor: pointer;">
+                                                <input class="form-check-input me-2" type="radio"
+                                                       name="paper_answer_@i"
+                                                       value="@letter"
+                                                       checked="@(PaperAnswers.ContainsKey(index) && PaperAnswers[index] == letter)"
+                                                       @onchange="@(() => UpdateAnswer(index, letter))" />
+                                                <strong>@letter.</strong> @option
+                                            </label>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <!-- 填空题：显示输入框 -->
+                                    <input type="text" class="form-control"
+                                           placeholder="请输入答案...（不区分大小写）"
+                                           value="@(PaperAnswers.ContainsKey(index) ? PaperAnswers[index] : "")"
+                                           @oninput="@(e => UpdateAnswer(index, e.Value?.ToString() ?? ""))" />
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2 sticky-bottom bg-white p-3 border-top">
+                        <button class="btn btn-success btn-lg" @onclick="SubmitPaper">
+                            ✅ 提交试卷（已完成 @PaperAnswers.Count(p => !string.IsNullOrWhiteSpace(p.Value))/@AllQuestions.Count 题）
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="ResetToStart">返回设置</button>
+                    </div>
+                }
+                else
+                {
+                    <!-- 试卷已提交：显示批改结果 -->
+                    <div class="alert alert-success">
+                        <h4>✅ 试卷已批改完成</h4>
+                        <p class="mb-0">总分：<strong>@Score</strong> / @(AllQuestions.Count * 10)  |  正确率：<strong>@((Asked.Count(a => a.Correct) * 100.0 / Asked.Count).ToString("F1"))%</strong></p>
+                    </div>
+
+                    @for (int i = 0; i < AllQuestions.Count; i++)
+                    {
+                        var question = AllQuestions[i];
+                        var askedItem = Asked[i];
+
+                        <div class="card mb-3 @(askedItem.Correct ? "border-success" : "border-danger")">
+                            <div class="card-header @(askedItem.Correct ? "bg-success text-white" : "bg-danger text-white")">
+                                <strong>第 @(i + 1) 题</strong>
+                                @if (askedItem.Correct)
+                                {
+                                    <span class="float-end">✅ 正确 +10分</span>
+                                }
+                                else
+                                {
+                                    <span class="float-end">❌ 错误</span>
+                                }
+                            </div>
+                            <div class="card-body">
+                                <p><strong>题目：</strong>@question.Text</p>
+                                <p><strong>你的答案：</strong>@askedItem.User</p>
+                                @if (!askedItem.Correct)
+                                {
+                                    <p class="text-danger"><strong>正确答案：</strong>@question.CorrectAnswer</p>
+                                    <div class="alert alert-warning mb-0">
+                                        <strong>📝 解析：</strong>@question.Explanation
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success btn-lg" @onclick="StartExam">重新测试</button>
+                        <a class="btn btn-info" href="/statistics/@GetStoragePrefix()">📊 查看统计报告</a>
+                        <a class="btn btn-warning" href="/wrong-questions/@GetStoragePrefix()">📖 进入错题本</a>
+                        <a class="btn btn-outline-secondary" href="/">返回首页</a>
+                    </div>
+                }
+            </div>
+        }
+        else if (CurrentQuestion != null)
+        {
+            <div class="question-section">
+                <div class="question-text">
+                    <span class="badge bg-primary me-2">第 @(Asked.Count + 1) 题</span>
+                    @CurrentQuestion.Text
+                </div>
+
+                @if (!IsSubmitted)
+                {
+                    @if (CurrentQuestion.Type == QuestionType.MultipleChoice)
+                    {
+                        <!-- 选择题：显示选项按钮 -->
+                        <div class="mb-3">
+                            <div class="list-group">
+                                @for (int optIdx = 0; optIdx < CurrentQuestion.ShuffledOptions.Count; optIdx++)
+                                {
+                                    var option = CurrentQuestion.ShuffledOptions[optIdx];
+                                    var letter = ((char)('A' + optIdx)).ToString();
+                                    <label class="list-group-item list-group-item-action" style="cursor: pointer;">
+                                        <input class="form-check-input me-2" type="radio"
+                                               name="answer_@CurrentQuestion.Id"
+                                               value="@letter"
+                                               checked="@(UserAnswer == letter)"
+                                               @onchange="@(() => UserAnswer = letter)" />
+                                        <strong>@letter.</strong> @option
+                                    </label>
+                                }
+                            </div>
+                            <button class="btn btn-primary btn-lg mt-3 w-100" @onclick="SubmitAnswer" disabled="@string.IsNullOrWhiteSpace(UserAnswer)">
+                                提交答案
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <!-- 填空题：显示输入框 -->
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control form-control-lg"
+                                   placeholder="请输入答案...（不区分大小写）"
+                                   @bind="UserAnswer"
+                                   @bind:event="oninput"
+                                   @onkeydown="HandleKeyDown" />
+                            <button class="btn btn-primary btn-lg" @onclick="SubmitAnswer" disabled="@string.IsNullOrWhiteSpace(UserAnswer)">
+                                提交答案
+                            </button>
+                        </div>
+                    }
+                }
+                else
+                {
+                    @if (IsCorrect)
+                    {
+                        <div class="success-box">
+                            <h4>✅ 回答正确！</h4>
+                            <p>加 10 分。</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-danger">
+                            <h4>❌ 回答错误</h4>
+                            <p><strong>正确答案：</strong>
+                                @if (CurrentQuestion.Type == QuestionType.MultipleChoice)
+                                {
+                                    <text>@CurrentQuestion.ShuffledCorrectAnswerLetter</text>
+                                }
+                                else
+                                {
+                                    <text>@CurrentQuestion.CorrectAnswer</text>
+                                }
+                            </p>
+                        </div>
+                        <div class="explanation-box">
+                            <h5>📝 题目解析：</h5>
+                            @CurrentQuestion.Explanation
+                        </div>
+                    }
+
+                    <div class="d-grid gap-2 mt-4">
+                        @if (Asked.Count < TargetCount)
+                        {
+                            <button class="btn btn-success btn-lg" @onclick="NextQuestion">下一题 ➡️</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning btn-lg" @onclick="CompleteExam">结束测试 ✅</button>
+                        }
+                        <button class="btn btn-outline-primary btn-lg" @onclick="ToggleReview">复习列表</button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// 获取科目名称
+    /// </summary>
+    protected override string GetSubjectName() => "语文";
+
+    /// <summary>
+    /// 获取 LocalStorage 存储键前缀
+    /// </summary>
+    protected override string GetStoragePrefix() => "chinese";
+
+    /// <summary>
+    /// 验证语文答案（处理中文标点符号规范化，不区分大小写）
+    /// </summary>
+    protected override bool ValidateAnswer(string userAnswer, Question question)
+    {
+        string input = userAnswer.Trim().ToUpper();
+
+        // 如果是选择题，比较字母答案
+        if (question.Type == QuestionType.MultipleChoice)
+        {
+            return input == question.ShuffledCorrectAnswerLetter;
+        }
+
+        // 填空题：规范化用户输入，将中文标点转为英文标点
+        input = input
+            .Replace("。", ".")
+            .Replace("，", ",")
+            .Replace("：", ":")
+            .Replace("；", ";");
+
+        string correct = question.CorrectAnswer.Trim();
+
+        // 不区分大小写比较
+        return string.Equals(input, correct, StringComparison.OrdinalIgnoreCase);
+    }
+}

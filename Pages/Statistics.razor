@@ -1,0 +1,218 @@
+@page "/statistics/{Subject}"
+@using MathExamWeb.Data.Services
+@using MathExamWeb.Data.Models
+@inject StatisticsService StatsService
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>@SubjectName 统计报告</h2>
+        <a class="btn btn-outline-secondary" href="/@SubjectRoute">返回测试</a>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+        </div>
+    }
+    else if (Summary == null || Summary.TotalExams == 0)
+    {
+        <div class="alert alert-info">
+            <h4>暂无统计数据</h4>
+            <p>完成至少一次测试后，这里将显示你的学习统计信息。</p>
+            <a class="btn btn-primary" href="/@SubjectRoute">开始测试</a>
+        </div>
+    }
+    else
+    {
+        <!-- 统计卡片 -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-muted">测试次数</h5>
+                        <h2 class="text-primary">@Summary.TotalExams</h2>
+                        <small class="text-muted">次</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-muted">累计答题</h5>
+                        <h2 class="text-info">@Summary.TotalQuestions</h2>
+                        <small class="text-muted">题</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-muted">平均正确率</h5>
+                        <h2 class="text-success">@((Summary.AverageAccuracy * 100).ToString("F1"))%</h2>
+                        <small class="text-muted">@GetAccuracyLevel(Summary.AverageAccuracy)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body">
+                        <h5 class="card-title text-muted">最高分</h5>
+                        <h2 class="text-warning">@Summary.BestScore</h2>
+                        <small class="text-muted">分</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 薄弱题型分析 -->
+        @if (Summary.WeakCategories.Any())
+        {
+            <div class="card mb-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">📊 薄弱题型分析</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">以下题型的正确率低于 60%，建议重点练习：</p>
+                    <div class="list-group">
+                        @foreach (var weak in Summary.WeakCategories.OrderBy(w => w.Value).Take(5))
+                        {
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>@weak.Key</strong>
+                                    </div>
+                                    <div class="d-flex align-items-center">
+                                        <div class="progress" style="width: 150px; height: 20px; margin-right: 10px;">
+                                            <div class="progress-bar @GetProgressBarClass(weak.Value)"
+                                                 role="progressbar"
+                                                 style="width: @((weak.Value * 100).ToString("F1"))%"
+                                                 aria-valuenow="@((weak.Value * 100).ToString("F1"))"
+                                                 aria-valuemin="0"
+                                                 aria-valuemax="100">
+                                                @((weak.Value * 100).ToString("F1"))%
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- 最近测试记录 -->
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">📝 最近测试记录</h5>
+            </div>
+            <div class="card-body">
+                @if (Summary.RecentRecords.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>日期</th>
+                                    <th>题目数</th>
+                                    <th>得分</th>
+                                    <th>正确率</th>
+                                    <th>难度</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var record in Summary.RecentRecords)
+                                {
+                                    <tr>
+                                        <td>@record.EndTime.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td>@record.TotalQuestions 题</td>
+                                        <td><strong>@record.Score</strong> / @(record.TotalQuestions * 10)</td>
+                                        <td>
+                                            <span class="badge @GetBadgeClass(record.AccuracyRate)">
+                                                @((record.AccuracyRate * 100).ToString("F1"))%
+                                            </span>
+                                        </td>
+                                        <td>@GetDifficultyText(record.Difficulty)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted">暂无测试记录</p>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Subject { get; set; } = "";
+
+    private StatisticsSummary? Summary;
+    private bool IsLoading = true;
+
+    private string SubjectName => Subject == "chinese" ? "语文" : "数学";
+    private string SubjectRoute => Subject == "chinese" ? "chinese" : "math";
+
+    protected override async Task OnInitializedAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            Summary = await StatsService.GetSummary(Subject);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载统计数据失败: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private string GetAccuracyLevel(double accuracy)
+    {
+        if (accuracy >= 0.9) return "优秀";
+        if (accuracy >= 0.8) return "良好";
+        if (accuracy >= 0.7) return "中等";
+        if (accuracy >= 0.6) return "及格";
+        return "需努力";
+    }
+
+    private string GetProgressBarClass(double accuracy)
+    {
+        if (accuracy >= 0.8) return "bg-success";
+        if (accuracy >= 0.6) return "bg-warning";
+        return "bg-danger";
+    }
+
+    private string GetBadgeClass(double accuracy)
+    {
+        if (accuracy >= 0.9) return "bg-success";
+        if (accuracy >= 0.8) return "bg-primary";
+        if (accuracy >= 0.7) return "bg-info";
+        if (accuracy >= 0.6) return "bg-warning";
+        return "bg-danger";
+    }
+
+    private string GetDifficultyText(DifficultyLevel? difficulty)
+    {
+        return difficulty switch
+        {
+            DifficultyLevel.Easy => "简单",
+            DifficultyLevel.Medium => "中等",
+            DifficultyLevel.Hard => "困难",
+            _ => "随机"
+        };
+    }
+}

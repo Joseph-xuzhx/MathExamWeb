@@ -1,0 +1,191 @@
+@page "/wrong-questions/{Subject}"
+@using MathExamWeb.Data.Services
+@using MathExamWeb.Data.Models
+@inject WrongQuestionService WrongService
+
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>@SubjectName 错题本</h2>
+        <a class="btn btn-outline-secondary" href="/@SubjectRoute">返回测试</a>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- 统计标签 -->
+        <div class="mb-3">
+            <span class="badge bg-danger fs-6 me-2">未掌握：@UnmasteredCount</span>
+            <span class="badge bg-success fs-6">已掌握：@MasteredCount</span>
+        </div>
+
+        <!-- 切换按钮 -->
+        <ul class="nav nav-tabs mb-3">
+            <li class="nav-item">
+                <a class="nav-link @(ShowMastered ? "" : "active")"
+                   @onclick="@(() => ShowMastered = false)"
+                   style="cursor: pointer;">
+                    未掌握错题 (@UnmasteredCount)
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link @(ShowMastered ? "active" : "")"
+                   @onclick="@(() => ShowMastered = true)"
+                   style="cursor: pointer;">
+                    已掌握错题 (@MasteredCount)
+                </a>
+            </li>
+        </ul>
+
+        @if (!DisplayedQuestions.Any())
+        {
+            <div class="alert alert-success">
+                <h4>@(ShowMastered ? "暂无已掌握的错题" : "恭喜！")</h4>
+                <p>@(ShowMastered ? "继续努力，标记你已掌握的错题吧！" : "目前没有错题记录，继续保持！")</p>
+            </div>
+        }
+        else
+        {
+            <!-- 错题列表 -->
+            <div class="row">
+                @foreach (var wrong in DisplayedQuestions)
+                {
+                    <div class="col-12 mb-3">
+                        <div class="card @(wrong.IsMastered ? "border-success" : "border-danger")">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <div>
+                                    @if (wrong.IsMastered)
+                                    {
+                                        <span class="badge bg-success me-2">✓ 已掌握</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger me-2">✗ 错误 @wrong.WrongCount 次</span>
+                                    }
+                                    <small class="text-muted">@wrong.Question.Category</small>
+                                </div>
+                                <small class="text-muted">
+                                    @(wrong.IsMastered ? $"掌握于 {wrong.MasteredAt:yyyy-MM-dd}" : $"最近错误 {wrong.WrongAt:yyyy-MM-dd}")
+                                </small>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <strong>题目：</strong>
+                                    <p class="mb-2">@wrong.Question.Text</p>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6 mb-2">
+                                        <strong class="text-success">✓ 正确答案：</strong>
+                                        <span class="text-success">@wrong.Question.CorrectAnswer</span>
+                                    </div>
+                                    <div class="col-md-6 mb-2">
+                                        <strong class="text-danger">✗ 你的答案：</strong>
+                                        <span class="text-danger">@wrong.UserAnswer</span>
+                                    </div>
+                                </div>
+
+                                @if (!string.IsNullOrEmpty(wrong.Question.Explanation))
+                                {
+                                    <div class="explanation-box mt-3">
+                                        <strong>📖 题目解析：</strong>
+                                        <p class="mb-0 mt-1">@wrong.Question.Explanation</p>
+                                    </div>
+                                }
+                            </div>
+                            <div class="card-footer bg-transparent">
+                                @if (!wrong.IsMastered)
+                                {
+                                    <button class="btn btn-sm btn-success" @onclick="@(() => MarkAsMastered(wrong.Id))">
+                                        <span>✓</span> 标记为已掌握
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger ms-2" @onclick="@(() => DeleteWrongQuestion(wrong.Id))">
+                                        <span>🗑</span> 删除
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary" disabled>
+                                        已于 @wrong.MasteredAt?.ToString("yyyy-MM-dd") 掌握
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger ms-2" @onclick="@(() => DeleteWrongQuestion(wrong.Id))">
+                                        <span>🗑</span> 删除
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string Subject { get; set; } = "";
+
+    private List<WrongQuestion> DisplayedQuestions = new List<WrongQuestion>();
+    private bool IsLoading = true;
+    private bool ShowMastered = false;
+
+    private string SubjectName => Subject == "chinese" ? "语文" : "数学";
+    private string SubjectRoute => Subject == "chinese" ? "chinese" : "math";
+
+    private int UnmasteredCount => AllWrongQuestions.Count(w => !w.IsMastered);
+    private int MasteredCount => AllWrongQuestions.Count(w => w.IsMastered);
+
+    private List<WrongQuestion> AllWrongQuestions = new List<WrongQuestion>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadWrongQuestions();
+    }
+
+    protected override void OnParametersSet()
+    {
+        UpdateDisplayList();
+    }
+
+    private async Task LoadWrongQuestions()
+    {
+        IsLoading = true;
+        try
+        {
+            AllWrongQuestions = await WrongService.GetAllWrongQuestions(Subject);
+            UpdateDisplayList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载错题失败: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void UpdateDisplayList()
+    {
+        DisplayedQuestions = ShowMastered
+            ? AllWrongQuestions.Where(w => w.IsMastered).ToList()
+            : AllWrongQuestions.Where(w => !w.IsMastered).ToList();
+    }
+
+    private async Task MarkAsMastered(string wrongQuestionId)
+    {
+        await WrongService.MarkAsMastered(wrongQuestionId);
+        await LoadWrongQuestions();
+    }
+
+    private async Task DeleteWrongQuestion(string wrongQuestionId)
+    {
+        await WrongService.DeleteWrongQuestion(wrongQuestionId);
+        await LoadWrongQuestions();
+    }
+}

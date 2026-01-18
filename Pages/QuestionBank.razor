@@ -1,0 +1,904 @@
+@page "/question-bank"
+@using MathExamWeb.Data
+@using MathExamWeb.Data.Models
+@using MathExamWeb.Data.Services
+@using Microsoft.JSInterop
+@using Microsoft.EntityFrameworkCore
+@inject QuestionRepository QuestionRepo
+@inject ExcelExportService ExcelExport
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject MathExamDbContext DbContext
+
+<div class="container">
+    <div class="exam-card">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="display-6">📚 题库管理</h1>
+            <div>
+                <button class="btn btn-success me-2" @onclick="ExportToExcel">
+                    📥 导出Excel
+                </button>
+                <button class="btn btn-warning me-2" @onclick="ShowAddQuestionModal">
+                    ✏️ 手工添加
+                </button>
+                <a href="/question-import" class="btn btn-primary me-2">
+                    ➕ 导入题目
+                </a>
+                <a href="/category-management" class="btn btn-info">
+                    📂 分类管理
+                </a>
+            </div>
+        </div>
+
+        <!-- 搜索和筛选区域 -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <!-- 第一行：基础筛选 -->
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">🔍 关键词搜索</label>
+                        <input type="text" class="form-control" @bind="SearchKeyword"
+                               placeholder="搜索题目文本、答案..."
+                               @onkeydown="HandleSearchKeyDown" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">📖 科目</label>
+                        <select class="form-select" @bind="FilterSubject" @bind:after="OnSubjectChanged">
+                            <option value="">全部</option>
+                            <option value="chinese">语文</option>
+                            <option value="math">数学</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">📝 题型</label>
+                        <select class="form-select" @bind="FilterType">
+                            <option value="">全部</option>
+                            <option value="MultipleChoice">选择题</option>
+                            <option value="FillInBlank">填空题</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">⭐ 难度</label>
+                        <select class="form-select" @bind="FilterDifficulty">
+                            <option value="">全部</option>
+                            <option value="Easy">简单</option>
+                            <option value="Medium">中等</option>
+                            <option value="Hard">困难</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end gap-2">
+                        <button class="btn btn-primary flex-fill" @onclick="ApplyFilters">
+                            🔍 查询
+                        </button>
+                        <button class="btn btn-outline-secondary flex-fill" @onclick="ClearFilters">
+                            🔄 重置
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 第二行：分类多选 -->
+                @if (!string.IsNullOrEmpty(FilterSubject) && AvailableCategories.Any())
+                {
+                    <div class="row">
+                        <div class="col-12">
+                            <label class="form-label">📂 分类（可多选）</label>
+                            <div class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                                @foreach (var group in AvailableCategories.GroupBy(c => c.GroupName).OrderBy(g => g.First().SortOrder))
+                                {
+                                    <div class="mb-2">
+                                        <strong class="text-muted d-block mb-1">@group.Key</strong>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            @foreach (var category in group.OrderBy(c => c.SortOrder))
+                                            {
+                                                <div class="form-check form-check-inline">
+                                                    <input class="form-check-input" type="checkbox"
+                                                           id="cat_@category.Id"
+                                                           checked="@SelectedCategories.Contains(category.Name)"
+                                                           @onchange="@(e => OnCategoryCheckChanged(category.Name, (bool)e.Value!))" />
+                                                    <label class="form-check-label" for="cat_@category.Id">
+                                                        @category.Name
+                                                    </label>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                            @if (SelectedCategories.Any())
+                            {
+                                <small class="text-muted">已选择 @SelectedCategories.Count 个分类</small>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="alert alert-info d-flex justify-content-between align-items-center">
+            <div>
+                📊 共有 <strong>@FilteredQuestions.Count</strong> 道题目
+                @if (!string.IsNullOrEmpty(SearchKeyword) || !string.IsNullOrEmpty(FilterSubject) ||
+                     !string.IsNullOrEmpty(FilterType) || !string.IsNullOrEmpty(FilterDifficulty) ||
+                     SelectedCategories.Any())
+                {
+                    <span>（已筛选，总计 @AllQuestions.Count 道）</span>
+                }
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <label class="mb-0">每页显示：</label>
+                <select class="form-select form-select-sm" style="width: auto;" value="@PageSize" @onchange="OnPageSizeChanged">
+                    <option value="5">5 条</option>
+                    <option value="10">10 条</option>
+                    <option value="20">20 条</option>
+                    <option value="50">50 条</option>
+                </select>
+            </div>
+        </div>
+
+        @if (IsLoading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">加载中...</span>
+                </div>
+                <p class="mt-2">正在加载题目...</p>
+            </div>
+        }
+        else if (!FilteredQuestions.Any())
+        {
+            <div class="alert alert-warning text-center">
+                <h4>😕 暂无题目</h4>
+                <p>请先导入题目或调整筛选条件</p>
+                <a href="/question-import" class="btn btn-primary">前往导入</a>
+            </div>
+        }
+        else
+        {
+            <!-- 题目列表 -->
+            <div class="row">
+                @foreach (var (question, index) in PagedQuestions.Select((q, i) => (q, (CurrentPage - 1) * PageSize + i + 1)))
+                {
+                    <div class="col-12 mb-3">
+                        <div class="card @(EditingQuestionId == question.Id ? "border-primary" : "")">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>题目 #@index</strong>
+                                    <span class="badge bg-@(question.Subject == "chinese" ? "info" : "success") ms-2">
+                                        @(question.Subject == "chinese" ? "语文" : "数学")
+                                    </span>
+                                    <span class="badge bg-@(question.Type == QuestionType.MultipleChoice ? "primary" : "warning") ms-2">
+                                        @(question.Type == QuestionType.MultipleChoice ? "选择题" : "填空题")
+                                    </span>
+                                    <span class="badge bg-@GetDifficultyColor(question.Difficulty) ms-2">
+                                        @GetDifficultyText(question.Difficulty)
+                                    </span>
+                                    @if (!string.IsNullOrEmpty(question.Category))
+                                    {
+                                        <span class="badge bg-secondary ms-2">@question.Category</span>
+                                    }
+                                </div>
+                                <div>
+                                    <small class="text-muted">@question.CreatedAt.ToString("yyyy-MM-dd HH:mm")</small>
+                                    @if (EditingQuestionId == question.Id)
+                                    {
+                                        <button class="btn btn-sm btn-success ms-2" @onclick="() => SaveEdit(question)">
+                                            💾 保存
+                                        </button>
+                                        <button class="btn btn-sm btn-secondary ms-1" @onclick="CancelEdit">
+                                            ❌ 取消
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-primary ms-2" @onclick="() => StartEdit(question)">
+                                            ✏️ 编辑
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger ms-1" @onclick="() => DeleteQuestion(question.Id)">
+                                            🗑️ 删除
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                @if (EditingQuestionId == question.Id && EditingQuestion != null)
+                                {
+                                    <!-- 编辑模式 -->
+                                    <div class="mb-3">
+                                        <label class="form-label"><strong>题目内容：</strong></label>
+                                        <textarea class="form-control" rows="3" @bind="EditingQuestion.Text"></textarea>
+                                    </div>
+
+                                    @if (EditingQuestion.Type == QuestionType.MultipleChoice)
+                                    {
+                                        <div class="mb-3">
+                                            <label class="form-label"><strong>选项：</strong></label>
+                                            @for (int i = 0; i < EditingQuestion.Options.Count; i++)
+                                            {
+                                                var optIndex = i;
+                                                <div class="input-group mb-2">
+                                                    <span class="input-group-text">@((char)('A' + i))</span>
+                                                    <input type="text" class="form-control" @bind="EditingQuestion.Options[optIndex]" />
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+
+                                    <div class="mb-3">
+                                        <label class="form-label"><strong>正确答案：</strong></label>
+                                        <input type="text" class="form-control" @bind="EditingQuestion.CorrectAnswer" />
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label"><strong>解析：</strong></label>
+                                        <textarea class="form-control" rows="2" @bind="EditingQuestion.Explanation"></textarea>
+                                    </div>
+
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <label class="form-label"><strong>难度：</strong></label>
+                                            <select class="form-select" @bind="EditingQuestion.Difficulty">
+                                                <option value="@DifficultyLevel.Easy">简单</option>
+                                                <option value="@DifficultyLevel.Medium">中等</option>
+                                                <option value="@DifficultyLevel.Hard">困难</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <label class="form-label"><strong>分类：</strong></label>
+                                            <input type="text" class="form-control" @bind="EditingQuestion.Category" placeholder="如：分数运算、名句填空" />
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <!-- 查看模式 -->
+                                    <p><strong>题目：</strong>@question.Text</p>
+
+                                    @if (question.Type == QuestionType.MultipleChoice && question.Options.Any())
+                                    {
+                                        <p><strong>选项：</strong></p>
+                                        <ul class="mb-2">
+                                            @for (int i = 0; i < question.Options.Count; i++)
+                                            {
+                                                <li><strong>@((char)('A' + i)).</strong> @question.Options[i]</li>
+                                            }
+                                        </ul>
+                                    }
+
+                                    <p class="mb-2">
+                                        <strong>答案：</strong>
+                                        <span class="text-success">@question.CorrectAnswer</span>
+                                    </p>
+
+                                    <p class="mb-0">
+                                        <strong>解析：</strong>@question.Explanation
+                                    </p>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- 分页导航 -->
+            @if (TotalPages > 1)
+            {
+                <nav aria-label="题目分页" class="mt-4">
+                    <ul class="pagination justify-content-center">
+                        <li class="page-item @(CurrentPage == 1 ? "disabled" : "")">
+                            <button class="page-link" @onclick="PreviousPage" disabled="@(CurrentPage == 1)">
+                                上一页
+                            </button>
+                        </li>
+
+                        @for (int i = 1; i <= TotalPages; i++)
+                        {
+                            var pageNum = i;
+                            // 显示首页、尾页和当前页附近的页码
+                            if (i == 1 || i == TotalPages || (i >= CurrentPage - 2 && i <= CurrentPage + 2))
+                            {
+                                <li class="page-item @(CurrentPage == i ? "active" : "")">
+                                    <button class="page-link" @onclick="() => GoToPage(pageNum)">
+                                        @i
+                                    </button>
+                                </li>
+                            }
+                            else if (i == CurrentPage - 3 || i == CurrentPage + 3)
+                            {
+                                <li class="page-item disabled">
+                                    <span class="page-link">...</span>
+                                </li>
+                            }
+                        }
+
+                        <li class="page-item @(CurrentPage == TotalPages ? "disabled" : "")">
+                            <button class="page-link" @onclick="NextPage" disabled="@(CurrentPage == TotalPages)">
+                                下一页
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="text-center text-muted mb-3">
+                        第 @CurrentPage / @TotalPages 页，共 @FilteredQuestions.Count 道题目
+                    </div>
+                </nav>
+            }
+        }
+
+        @if (!string.IsNullOrEmpty(SuccessMessage))
+        {
+            <div class="alert alert-success alert-dismissible fade show mt-3" role="alert">
+                ✅ @SuccessMessage
+                <button type="button" class="btn-close" @onclick="() => SuccessMessage = string.Empty"></button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
+                ❌ @ErrorMessage
+                <button type="button" class="btn-close" @onclick="() => ErrorMessage = string.Empty"></button>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- 手工添加题目模态框 -->
+@if (ShowAddModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">✏️ 手工添加题目</h5>
+                    <button type="button" class="btn-close" @onclick="CloseAddQuestionModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">科目 <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="NewQuestion.Subject">
+                            <option value="">请选择</option>
+                            <option value="chinese">语文</option>
+                            <option value="math">数学</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">题型 <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="NewQuestion.Type">
+                            <option value="">请选择</option>
+                            <option value="@QuestionType.MultipleChoice">选择题</option>
+                            <option value="@QuestionType.FillInBlank">填空题</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">难度 <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="NewQuestion.Difficulty">
+                            <option value="">请选择</option>
+                            <option value="@DifficultyLevel.Easy">简单</option>
+                            <option value="@DifficultyLevel.Medium">中等</option>
+                            <option value="@DifficultyLevel.Hard">困难</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">分类</label>
+                        <select class="form-select" @bind="NewQuestion.Category">
+                            <option value="">请选择</option>
+                            @if (NewQuestion.Subject == "math")
+                            {
+                                <optgroup label="基础运算">
+                                    <option value="加法">加法</option>
+                                    <option value="减法">减法</option>
+                                    <option value="乘法">乘法</option>
+                                    <option value="除法">除法</option>
+                                    <option value="混合运算">混合运算</option>
+                                </optgroup>
+                                <optgroup label="分数运算">
+                                    <option value="分数加法">分数加法</option>
+                                    <option value="分数减法">分数减法</option>
+                                    <option value="分数乘法">分数乘法</option>
+                                    <option value="分数除法">分数除法</option>
+                                </optgroup>
+                                <optgroup label="应用题">
+                                    <option value="应用题-买卖">应用题-买卖</option>
+                                    <option value="应用题-路程">应用题-路程</option>
+                                    <option value="应用题-工程">应用题-工程</option>
+                                    <option value="应用题-综合">应用题-综合</option>
+                                </optgroup>
+                                <optgroup label="其他">
+                                    <option value="百分数">百分数</option>
+                                    <option value="小数">小数</option>
+                                    <option value="几何">几何</option>
+                                    <option value="统计">统计</option>
+                                    <option value="比和比例">比和比例</option>
+                                </optgroup>
+                            }
+                            else if (NewQuestion.Subject == "chinese")
+                            {
+                                <optgroup label="古诗文">
+                                    <option value="古诗词">古诗词</option>
+                                    <option value="名句填空">名句填空</option>
+                                    <option value="文言文">文言文</option>
+                                </optgroup>
+                                <optgroup label="词汇">
+                                    <option value="近义词">近义词</option>
+                                    <option value="反义词">反义词</option>
+                                    <option value="成语">成语</option>
+                                    <option value="词语辨析">词语辨析</option>
+                                </optgroup>
+                                <optgroup label="语法">
+                                    <option value="修辞手法">修辞手法</option>
+                                    <option value="病句修改">病句修改</option>
+                                    <option value="标点符号">标点符号</option>
+                                    <option value="句式变换">句式变换</option>
+                                </optgroup>
+                                <optgroup label="阅读理解">
+                                    <option value="阅读理解">阅读理解</option>
+                                    <option value="现代文阅读">现代文阅读</option>
+                                </optgroup>
+                            }
+                        </select>
+                        @if (string.IsNullOrEmpty(NewQuestion.Subject))
+                        {
+                            <small class="text-muted">请先选择科目</small>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">题目文本 <span class="text-danger">*</span></label>
+                        <textarea class="form-control" rows="4" @bind="NewQuestion.Text"
+                                  placeholder="请输入题目内容"></textarea>
+                    </div>
+
+                    @if (NewQuestion.Type == QuestionType.MultipleChoice)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label">选项（每行一个选项，不需要加A、B、C、D）<span class="text-danger">*</span></label>
+                            <textarea class="form-control" rows="4" @bind="OptionsText"
+                                      placeholder="例如：&#10;北京&#10;上海&#10;广州&#10;深圳"></textarea>
+                            <small class="text-muted">系统会自动添加 A、B、C、D 标签并随机打乱顺序</small>
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label">正确答案 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" @bind="NewQuestion.CorrectAnswer"
+                               placeholder="@(NewQuestion.Type == QuestionType.MultipleChoice ? "填写正确选项内容（不是字母）" : "填写正确答案")" />
+                        @if (NewQuestion.Type == QuestionType.MultipleChoice)
+                        {
+                            <small class="text-muted">注意：请填写选项的完整内容，而不是 A、B、C、D</small>
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">答案解析</label>
+                        <textarea class="form-control" rows="3" @bind="NewQuestion.Explanation"
+                                  placeholder="请输入答案解析（可选）"></textarea>
+                    </div>
+
+                    @if (NewQuestion.Subject == "math")
+                    {
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" @bind="NewQuestion.IsFractionAnswer" id="isFraction">
+                                <label class="form-check-label" for="isFraction">
+                                    答案是分数（用于分数题目）
+                                </label>
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseAddQuestionModal">取消</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveNewQuestion">保存题目</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Question> AllQuestions = new();
+    private List<Question> FilteredQuestions = new();
+    private List<Question> PagedQuestions = new();
+
+    private string SearchKeyword = "";
+    private string FilterSubject = "";
+    private string FilterType = "";
+    private string FilterDifficulty = "";
+    private List<string> SelectedCategories = new();
+    private List<CategoryEntity> AvailableCategories = new();
+
+    // 分页相关
+    private int CurrentPage = 1;
+    private int PageSize = 10;
+    private int TotalPages => (int)System.Math.Ceiling((double)FilteredQuestions.Count / PageSize);
+
+    private bool IsLoading = false;
+    private string SuccessMessage = "";
+    private string ErrorMessage = "";
+
+    // 编辑相关
+    private string? EditingQuestionId = null;
+    private Question? EditingQuestion = null;
+
+    // 手工添加相关
+    private bool ShowAddModal = false;
+    private Question NewQuestion = new();
+    private string OptionsText = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadQuestions();
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        if (!string.IsNullOrEmpty(FilterSubject))
+        {
+            AvailableCategories = await DbContext.Categories
+                .Where(c => c.Subject == FilterSubject && c.IsActive)
+                .OrderBy(c => c.SortOrder)
+                .ToListAsync();
+        }
+        else
+        {
+            AvailableCategories.Clear();
+        }
+    }
+
+    private async Task LoadQuestions()
+    {
+        IsLoading = true;
+        try
+        {
+            AllQuestions = await QuestionRepo.GetAllAsync();
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"加载题目失败：{ex.Message}";
+            Console.WriteLine($"Load Error: {ex}");
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        FilteredQuestions = AllQuestions.Where(q =>
+        {
+            // 关键词搜索
+            if (!string.IsNullOrEmpty(SearchKeyword))
+            {
+                var keyword = SearchKeyword.ToLower();
+                if (!q.Text.ToLower().Contains(keyword) &&
+                    !q.CorrectAnswer.ToLower().Contains(keyword) &&
+                    !q.Explanation.ToLower().Contains(keyword))
+                {
+                    return false;
+                }
+            }
+
+            // 科目筛选
+            if (!string.IsNullOrEmpty(FilterSubject) && q.Subject != FilterSubject)
+                return false;
+
+            // 题型筛选
+            if (!string.IsNullOrEmpty(FilterType) && q.Type.ToString() != FilterType)
+                return false;
+
+            // 难度筛选
+            if (!string.IsNullOrEmpty(FilterDifficulty) && q.Difficulty.ToString() != FilterDifficulty)
+                return false;
+
+            // 分类筛选（多选）
+            if (SelectedCategories.Any() && !SelectedCategories.Contains(q.Category ?? ""))
+                return false;
+
+            return true;
+        }).ToList();
+
+        // 重置到第一页
+        CurrentPage = 1;
+        UpdatePagedQuestions();
+
+        StateHasChanged();
+    }
+
+    private void UpdatePagedQuestions()
+    {
+        var skip = (CurrentPage - 1) * PageSize;
+        PagedQuestions = FilteredQuestions.Skip(skip).Take(PageSize).ToList();
+    }
+
+    private void GoToPage(int page)
+    {
+        if (page < 1 || page > TotalPages) return;
+        CurrentPage = page;
+        UpdatePagedQuestions();
+        StateHasChanged();
+    }
+
+    private void PreviousPage()
+    {
+        if (CurrentPage > 1)
+        {
+            CurrentPage--;
+            UpdatePagedQuestions();
+            StateHasChanged();
+        }
+    }
+
+    private void NextPage()
+    {
+        if (CurrentPage < TotalPages)
+        {
+            CurrentPage++;
+            UpdatePagedQuestions();
+            StateHasChanged();
+        }
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newSize))
+        {
+            PageSize = newSize;
+            CurrentPage = 1;
+            UpdatePagedQuestions();
+        }
+    }
+
+    private void ClearFilters()
+    {
+        SearchKeyword = "";
+        FilterSubject = "";
+        FilterType = "";
+        FilterDifficulty = "";
+        SelectedCategories.Clear();
+        ApplyFilters();
+    }
+
+    private async Task OnSubjectChanged()
+    {
+        // 当科目改变时，清空分类选择并重新加载分类列表
+        SelectedCategories.Clear();
+        await LoadCategories();
+        StateHasChanged();
+    }
+
+    private void OnCategoryCheckChanged(string categoryName, bool isChecked)
+    {
+        if (isChecked)
+        {
+            if (!SelectedCategories.Contains(categoryName))
+            {
+                SelectedCategories.Add(categoryName);
+            }
+        }
+        else
+        {
+            SelectedCategories.Remove(categoryName);
+        }
+    }
+
+    private void HandleSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            ApplyFilters();
+        }
+    }
+
+    private void StartEdit(Question question)
+    {
+        EditingQuestionId = question.Id;
+        // 深拷贝题目以便编辑
+        EditingQuestion = new Question
+        {
+            Id = question.Id,
+            Text = question.Text,
+            Type = question.Type,
+            Options = new List<string>(question.Options),
+            CorrectAnswer = question.CorrectAnswer,
+            Explanation = question.Explanation,
+            Difficulty = question.Difficulty,
+            Category = question.Category,
+            Subject = question.Subject,
+            CreatedAt = question.CreatedAt
+        };
+    }
+
+    private void CancelEdit()
+    {
+        EditingQuestionId = null;
+        EditingQuestion = null;
+    }
+
+    private async Task SaveEdit(Question originalQuestion)
+    {
+        if (EditingQuestion == null) return;
+
+        try
+        {
+            // 更新原始题目
+            originalQuestion.Text = EditingQuestion.Text;
+            originalQuestion.Options = EditingQuestion.Options;
+            originalQuestion.CorrectAnswer = EditingQuestion.CorrectAnswer;
+            originalQuestion.Explanation = EditingQuestion.Explanation;
+            originalQuestion.Difficulty = EditingQuestion.Difficulty;
+            originalQuestion.Category = EditingQuestion.Category;
+
+            await QuestionRepo.UpdateAsync(originalQuestion);
+
+            SuccessMessage = "题目已成功更新！";
+            EditingQuestionId = null;
+            EditingQuestion = null;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"保存失败：{ex.Message}";
+            Console.WriteLine($"Save Error: {ex}");
+        }
+    }
+
+    private async Task DeleteQuestion(string id)
+    {
+        if (!await JSRuntime.InvokeAsync<bool>("confirm", "确定要删除这道题目吗？"))
+            return;
+
+        try
+        {
+            await QuestionRepo.DeleteAsync(id);
+            AllQuestions.RemoveAll(q => q.Id == id);
+            ApplyFilters();
+            SuccessMessage = "题目已成功删除！";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"删除失败：{ex.Message}";
+            Console.WriteLine($"Delete Error: {ex}");
+        }
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            if (!FilteredQuestions.Any())
+            {
+                ErrorMessage = "没有可导出的题目！";
+                return;
+            }
+
+            // 生成 Excel 文件
+            var excelBytes = ExcelExport.ExportQuestionsBySubjectToExcel(FilteredQuestions, "题库导出");
+
+            // 生成文件名
+            var fileName = $"题库导出_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+
+            // 触发浏览器下载
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, Convert.ToBase64String(excelBytes));
+
+            SuccessMessage = $"成功导出 {FilteredQuestions.Count} 道题目！";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"导出失败：{ex.Message}";
+            Console.WriteLine($"Export Error: {ex}");
+        }
+    }
+
+    private string GetDifficultyColor(DifficultyLevel difficulty)
+    {
+        return difficulty switch
+        {
+            DifficultyLevel.Easy => "success",
+            DifficultyLevel.Medium => "warning",
+            DifficultyLevel.Hard => "danger",
+            _ => "secondary"
+        };
+    }
+
+    private string GetDifficultyText(DifficultyLevel difficulty)
+    {
+        return difficulty switch
+        {
+            DifficultyLevel.Easy => "简单",
+            DifficultyLevel.Medium => "中等",
+            DifficultyLevel.Hard => "困难",
+            _ => "未知"
+        };
+    }
+
+    // 手工添加题目相关方法
+    private void ShowAddQuestionModal()
+    {
+        NewQuestion = new Question
+        {
+            Id = Guid.NewGuid().ToString(),
+            CreatedAt = DateTime.UtcNow
+        };
+        OptionsText = "";
+        ShowAddModal = true;
+    }
+
+    private void CloseAddQuestionModal()
+    {
+        ShowAddModal = false;
+        NewQuestion = new();
+        OptionsText = "";
+    }
+
+    private async Task SaveNewQuestion()
+    {
+        try
+        {
+            // 验证必填字段
+            if (string.IsNullOrWhiteSpace(NewQuestion.Subject))
+            {
+                ErrorMessage = "请选择科目";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(NewQuestion.Text))
+            {
+                ErrorMessage = "请输入题目文本";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(NewQuestion.CorrectAnswer))
+            {
+                ErrorMessage = "请输入正确答案";
+                return;
+            }
+
+            // 处理选择题选项
+            if (NewQuestion.Type == QuestionType.MultipleChoice)
+            {
+                if (string.IsNullOrWhiteSpace(OptionsText))
+                {
+                    ErrorMessage = "请输入选项";
+                    return;
+                }
+
+                var options = OptionsText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(o => o.Trim())
+                    .Where(o => !string.IsNullOrEmpty(o))
+                    .ToList();
+
+                if (options.Count < 2)
+                {
+                    ErrorMessage = "选择题至少需要2个选项";
+                    return;
+                }
+
+                NewQuestion.Options = options;
+            }
+            else
+            {
+                NewQuestion.Options = new List<string>();
+            }
+
+            // 保存到数据库
+            await QuestionRepo.AddAsync(NewQuestion);
+
+            // 刷新题目列表
+            await LoadQuestions();
+
+            SuccessMessage = "题目添加成功";
+            CloseAddQuestionModal();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"保存失败：{ex.Message}";
+            Console.WriteLine($"Save Error: {ex}");
+        }
+    }
+}

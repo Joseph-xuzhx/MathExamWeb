@@ -1,0 +1,773 @@
+@page "/question-import"
+@using MathExamWeb.Data
+@using MathExamWeb.Data.Models
+@using MathExamWeb.Data.Services
+@using System.Text
+@inject NavigationManager Navigation
+@inject AIQuestionParserService AIParser
+@inject OCRService OCRService
+@inject PDFService PDFService
+@inject OfflineOCRService OfflineOCR
+@inject QuestionRepository QuestionRepo
+
+<div class="container">
+    <div class="exam-card">
+        <div class="text-center mb-4">
+            <h1 class="display-6">📚 题库管理与导入</h1>
+            <p class="text-muted">支持上传图片或PDF文件批量导入题目</p>
+        </div>
+
+        <div class="row">
+            <!-- 左侧：上传区域 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">📤 上传文件</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">选择科目</label>
+                            <div class="btn-group d-flex" role="group">
+                                <input type="radio" class="btn-check" name="subject" id="subjectChinese"
+                                       checked="@(SelectedSubject == "chinese")"
+                                       @onclick="@(() => SelectedSubject = "chinese")" />
+                                <label class="btn btn-outline-info" for="subjectChinese">语文</label>
+
+                                <input type="radio" class="btn-check" name="subject" id="subjectMath"
+                                       checked="@(SelectedSubject == "math")"
+                                       @onclick="@(() => SelectedSubject = "math")" />
+                                <label class="btn btn-outline-success" for="subjectMath">数学</label>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">导入方式</label>
+                            <div class="btn-group d-flex mb-2" role="group">
+                                <input type="radio" class="btn-check" name="importMode" id="modeText"
+                                       checked="@(ImportMode == "text")"
+                                       @onclick="@(() => ImportMode = "text")" />
+                                <label class="btn btn-outline-primary" for="modeText">
+                                    📝 规则解析
+                                </label>
+
+                                <input type="radio" class="btn-check" name="importMode" id="modeAI"
+                                       checked="@(ImportMode == "ai")"
+                                       @onclick="@(() => ImportMode = "ai")" />
+                                <label class="btn btn-outline-success" for="modeAI">
+                                    🤖 AI智能识别
+                                </label>
+
+                                <input type="radio" class="btn-check" name="importMode" id="modeFile"
+                                       checked="@(ImportMode == "file")"
+                                       @onclick="@(() => ImportMode = "file")" />
+                                <label class="btn btn-outline-warning" for="modeFile">
+                                    📸 在线OCR
+                                </label>
+
+                                <input type="radio" class="btn-check" name="importMode" id="modeOfflineOCR"
+                                       checked="@(ImportMode == "offline-ocr")"
+                                       @onclick="@(() => ImportMode = "offline-ocr")" />
+                                <label class="btn btn-outline-danger" for="modeOfflineOCR">
+                                    🔒 离线OCR
+                                </label>
+                            </div>
+                            @if (ImportMode == "offline-ocr" && !OfflineOCR.IsAvailable())
+                            {
+                                <div class="alert alert-warning small mt-2">
+                                    ⚠️ 离线OCR需要语言包。可用语言：@string.Join(", ", OfflineOCR.GetAvailableLanguages())
+                                </div>
+                            }
+                        </div>
+
+                        @if (ImportMode == "text")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">粘贴题目文本</label>
+                                <textarea class="form-control"
+                                          rows="10"
+                                          @bind="InputText"
+                                          placeholder="请粘贴题目文本..."></textarea>
+                                <small class="text-muted">请按照右侧格式要求输入题目</small>
+                            </div>
+                        }
+                        else if (ImportMode == "ai")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">API 配置</label>
+                                <div class="input-group mb-2">
+                                    <span class="input-group-text">🌐</span>
+                                    <input type="text"
+                                           class="form-control"
+                                           @bind="ApiEndpoint"
+                                           placeholder="API地址（留空使用官方地址）" />
+                                </div>
+                                <div class="input-group mb-2">
+                                    <span class="input-group-text">🔑</span>
+                                    <input type="@(ShowApiKey ? "text" : "password")"
+                                           class="form-control"
+                                           @bind="ApiKey"
+                                           placeholder="请输入Claude API Key（如：sk-ant-...）" />
+                                    <button class="btn btn-outline-secondary"
+                                            type="button"
+                                            @onclick="ToggleApiKeyVisibility">
+                                        @(ShowApiKey ? "👁️" : "🔒")
+                                    </button>
+                                </div>
+                                <small class="text-muted">
+                                    🌐 支持自定义API地址（如第三方代理）
+                                    <br />💡 您的配置仅在浏览器本地使用，不会上传到服务器
+                                    <br />🔗 官方API: <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">粘贴题目文本（任意格式）</label>
+                                <textarea class="form-control"
+                                          rows="10"
+                                          @bind="InputText"
+                                          placeholder="AI可以识别任意格式的题目，例如：
+• 从试卷图片OCR后的文本
+• 从Word/PDF复制的内容
+• 手写或不规范的格式
+• 缺少选项或解析的题目
+
+AI会自动整理和补全题目信息"></textarea>
+                            </div>
+                        }
+                        else if (ImportMode == "offline-ocr")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">上传图片</label>
+                                <InputFile OnChange="HandleFileSelected"
+                                           accept="image/*"
+                                           class="form-control" />
+                                <small class="text-muted">支持格式：JPG、PNG（最大10MB）</small>
+                                <div class="alert alert-success mt-2 small">
+                                    🔒 <strong>离线OCR</strong>：使用开源Tesseract引擎，完全本地处理，无需API Key
+                                    <br />✅ <strong>优势</strong>：免费、隐私、离线可用
+                                    <br />⚠️ <strong>注意</strong>：需要下载对应的语言包（chi_sim.traineddata用于中文）
+                                </div>
+                            </div>
+
+                            @if (OfflineOCR.IsAvailable())
+                            {
+                                <div class="alert alert-info small">
+                                    ✅ 离线OCR已就绪
+                                    <br />可用语言：<strong>@string.Join(", ", OfflineOCR.GetAvailableLanguages())</strong>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="alert alert-warning small">
+                                    ⚠️ 未检测到语言包
+                                    <br />请下载语言包到：<code>tessdata/</code>目录
+                                    <br />下载地址：<a href="https://github.com/tesseract-ocr/tessdata" target="_blank">GitHub tessdata</a>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label">API 配置</label>
+                                <div class="input-group mb-2">
+                                    <span class="input-group-text">🌐</span>
+                                    <input type="text"
+                                           class="form-control"
+                                           @bind="ApiEndpoint"
+                                           placeholder="API地址（留空使用官方地址）" />
+                                </div>
+                                <div class="input-group mb-2">
+                                    <span class="input-group-text">🔑</span>
+                                    <input type="@(ShowApiKey ? "text" : "password")"
+                                           class="form-control"
+                                           @bind="ApiKey"
+                                           placeholder="请输入Claude API Key（如：sk-ant-...）" />
+                                    <button class="btn btn-outline-secondary"
+                                            type="button"
+                                            @onclick="ToggleApiKeyVisibility">
+                                        @(ShowApiKey ? "👁️" : "🔒")
+                                    </button>
+                                </div>
+                                <small class="text-muted">
+                                    🌐 支持自定义API地址（如第三方代理）
+                                    <br />💡 您的配置仅在浏览器本地使用
+                                    <br />🔗 官方API: <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+                                </small>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">上传文件</label>
+                                <InputFile OnChange="HandleFileSelected"
+                                           accept="image/*,.pdf"
+                                           class="form-control" />
+                                <small class="text-muted">支持格式：JPG、PNG（最大10MB）</small>
+                                <div class="alert alert-info mt-2 small">
+                                    📸 <strong>在线OCR</strong>：使用Claude Vision识别图片中的题目文字
+                                    <br />📄 <strong>PDF文件</strong>：建议先转为图片后上传，或直接复制文字
+                                </div>
+                            </div>
+                        }
+
+                        @if (IsProcessing)
+                        {
+                            <div class="alert alert-info">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                正在处理文件，请稍候...
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(ErrorMessage))
+                        {
+                            <div class="alert alert-danger">
+                                ❌ @ErrorMessage
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(SuccessMessage))
+                        {
+                            <div class="alert alert-success">
+                                ✅ @SuccessMessage
+                            </div>
+                        }
+
+                        <div class="d-grid gap-2">
+                            @if (ImportMode == "text")
+                            {
+                                <button class="btn btn-primary btn-lg"
+                                        @onclick="ProcessText"
+                                        disabled="@(string.IsNullOrWhiteSpace(InputText) || IsProcessing)">
+                                    🔍 解析题目
+                                </button>
+                                @if (ParsedQuestions.Any())
+                                {
+                                    <button class="btn btn-success btn-lg"
+                                            @onclick="SaveQuestions"
+                                            disabled="@IsProcessing">
+                                        💾 保存到题库（@ParsedQuestions.Count 题）
+                                    </button>
+                                }
+                            }
+                            else if (ImportMode == "ai")
+                            {
+                                <button class="btn btn-success btn-lg"
+                                        @onclick="ProcessWithAI"
+                                        disabled="@(string.IsNullOrWhiteSpace(InputText) || string.IsNullOrWhiteSpace(ApiKey) || IsProcessing)">
+                                    🤖 AI智能识别
+                                </button>
+                                @if (ParsedQuestions.Any())
+                                {
+                                    <button class="btn btn-primary btn-lg"
+                                            @onclick="SaveQuestions"
+                                            disabled="@IsProcessing">
+                                        💾 保存到题库（@ParsedQuestions.Count 题）
+                                    </button>
+                                }
+                            }
+                            else
+                            {
+                                <button class="btn btn-primary btn-lg"
+                                        @onclick="ProcessFile"
+                                        disabled="@(SelectedFile == null || (ImportMode != "offline-ocr" && string.IsNullOrWhiteSpace(ApiKey)) || IsProcessing)">
+                                    @if (ImportMode == "offline-ocr")
+                                    {
+                                        <text>🔒 离线识别图片并解析题目</text>
+                                    }
+                                    else
+                                    {
+                                        <text>📸 识别图片并解析题目</text>
+                                    }
+                                </button>
+                                @if (ParsedQuestions.Any())
+                                {
+                                    <button class="btn btn-success btn-lg"
+                                            @onclick="SaveQuestions"
+                                            disabled="@IsProcessing">
+                                        💾 保存到题库（@ParsedQuestions.Count 题）
+                                    </button>
+                                }
+                            }
+                            <a class="btn btn-outline-secondary" href="/">返回首页</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 使用说明 -->
+                <div class="card mt-3">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0">💡 使用说明</h6>
+                    </div>
+                    <div class="card-body small">
+                        @if (ImportMode == "text")
+                        {
+                            <p class="mb-2"><strong>题目格式要求：</strong></p>
+                            <pre class="bg-light p-2 small">1. 题目文本
+答案：正确答案
+解析：题目解析
+
+2. 题目文本
+A. 选项A
+B. 选项B
+C. 选项C
+D. 选项D
+答案：A
+解析：题目解析</pre>
+                        }
+                        else if (ImportMode == "ai")
+                        {
+                            <p><strong>🤖 AI智能识别特点：</strong></p>
+                            <ul class="mb-2">
+                                <li>✅ 不需要严格格式</li>
+                                <li>✅ 自动补全缺失的选项或解析</li>
+                                <li>✅ 识别OCR后的混乱文本</li>
+                                <li>✅ 纠正常见格式错误</li>
+                            </ul>
+                            <p class="mb-0 text-muted">使用Claude 3.5 Sonnet模型，识别准确率高</p>
+                        }
+                        else
+                        {
+                            <p><strong>📸 图片识别流程：</strong></p>
+                            <ol class="mb-2">
+                                <li>配置Claude API Key和API地址</li>
+                                <li>上传题目图片（JPG/PNG）</li>
+                                <li>Claude Vision自动识别文字</li>
+                                <li>Claude AI解析为结构化题目</li>
+                                <li>预览并保存到题库</li>
+                            </ol>
+                            <p class="mb-2"><strong>拍照技巧：</strong></p>
+                            <ul class="mb-0">
+                                <li>✅ 确保光线充足</li>
+                                <li>✅ 文字清晰可读</li>
+                                <li>✅ 避免倾斜和阴影</li>
+                                <li>✅ 建议拍摄多道题目一起上传</li>
+                            </ul>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：预览区域 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">👁️ 识别预览</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 600px; overflow-y: auto;">
+                        @if (!string.IsNullOrEmpty(RecognizedText))
+                        {
+                            <h6>📄 识别的文本：</h6>
+                            <pre class="bg-light p-3 small">@RecognizedText</pre>
+
+                            @if (ParsedQuestions.Any())
+                            {
+                                <hr />
+                                <h6>📝 解析的题目（共 @ParsedQuestions.Count 题）：</h6>
+                                @foreach (var (q, index) in ParsedQuestions.Select((q, i) => (q, i + 1)))
+                                {
+                                    <div class="card mb-2 border-success">
+                                        <div class="card-header bg-light">
+                                            <strong>题目 @index</strong>
+                                            @if (q.Type == QuestionType.MultipleChoice)
+                                            {
+                                                <span class="badge bg-info ms-2">选择题</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-success ms-2">填空题</span>
+                                            }
+                                        </div>
+                                        <div class="card-body small">
+                                            <p><strong>题目：</strong>@q.Text</p>
+                                            @if (q.Type == QuestionType.MultipleChoice && q.Options.Any())
+                                            {
+                                                <p><strong>选项：</strong></p>
+                                                <ul class="mb-2">
+                                                    @foreach (var opt in q.Options)
+                                                    {
+                                                        <li>@opt</li>
+                                                    }
+                                                </ul>
+                                            }
+                                            <p><strong>答案：</strong>@q.CorrectAnswer</p>
+                                            <p class="mb-0"><strong>解析：</strong>@q.Explanation</p>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        }
+                        else
+                        {
+                            <div class="text-center text-muted py-5">
+                                <i class="display-1">📭</i>
+                                <p>上传文件后，识别结果会显示在这里</p>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string SelectedSubject = "chinese";
+    private string ImportMode = "text";
+    private string InputText = "";
+    private string ApiKey = "";
+    private string ApiEndpoint = "https://api.anthropic.com/v1/messages";
+    private bool ShowApiKey = false;
+    private IBrowserFile? SelectedFile;
+    private bool IsProcessing = false;
+    private string ErrorMessage = "";
+    private string SuccessMessage = "";
+    private string RecognizedText = "";
+    private List<Question> ParsedQuestions = new List<Question>();
+
+    private void ToggleApiKeyVisibility()
+    {
+        ShowApiKey = !ShowApiKey;
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        SelectedFile = e.File;
+        ErrorMessage = "";
+        SuccessMessage = "";
+        RecognizedText = "";
+        ParsedQuestions.Clear();
+
+        // 验证文件大小（10MB）
+        if (SelectedFile.Size > 10 * 1024 * 1024)
+        {
+            ErrorMessage = "文件大小超过10MB限制";
+            SelectedFile = null;
+        }
+    }
+
+    private void ProcessText()
+    {
+        IsProcessing = true;
+        ErrorMessage = "";
+        SuccessMessage = "";
+        RecognizedText = InputText;
+        ParsedQuestions.Clear();
+
+        try
+        {
+            ParsedQuestions = ParseQuestionsFromText(InputText);
+
+            if (ParsedQuestions.Any())
+            {
+                SuccessMessage = $"成功解析 {ParsedQuestions.Count} 道题目！请在预览区域确认后点击【保存到题库】按钮。";
+            }
+            else
+            {
+                ErrorMessage = "未能解析出有效的题目，请检查格式是否正确。";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"解析题目时出错：{ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task ProcessWithAI()
+    {
+        IsProcessing = true;
+        ErrorMessage = "";
+        SuccessMessage = "";
+        RecognizedText = InputText;
+        ParsedQuestions.Clear();
+
+        try
+        {
+            // 调用AI服务解析题目，传递自定义API端点
+            ParsedQuestions = await AIParser.ParseQuestionsWithAI(InputText, ApiKey, "claude-3-5-sonnet-20241022", ApiEndpoint);
+
+            if (ParsedQuestions.Any())
+            {
+                SuccessMessage = $"🤖 AI成功识别 {ParsedQuestions.Count} 道题目！请在预览区域确认后点击【保存到题库】按钮。";
+            }
+            else
+            {
+                ErrorMessage = "AI未能识别出有效的题目，请检查输入内容。";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"AI识别失败：{ex.Message}";
+            Console.WriteLine($"AI Error Details: {ex}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task SaveQuestions()
+    {
+        if (!ParsedQuestions.Any()) return;
+
+        IsProcessing = true;
+        ErrorMessage = "";
+        try
+        {
+            // 为每个题目设置科目
+            foreach (var question in ParsedQuestions)
+            {
+                question.Subject = SelectedSubject;
+            }
+
+            // 保存到数据库
+            await QuestionRepo.AddRangeAsync(ParsedQuestions);
+
+            SuccessMessage = $"✅ 成功将 {ParsedQuestions.Count} 道题目保存到 {(SelectedSubject == "chinese" ? "语文" : "数学")} 题库！";
+
+            // 清空已保存的题目
+            ParsedQuestions.Clear();
+            InputText = "";
+            RecognizedText = "";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"保存题目时出错：{ex.Message}";
+            Console.WriteLine($"Save Error Details: {ex}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task ProcessFile()
+    {
+        if (SelectedFile == null) return;
+
+        IsProcessing = true;
+        ErrorMessage = "";
+        SuccessMessage = "";
+        RecognizedText = "";
+        ParsedQuestions.Clear();
+
+        try
+        {
+            // 读取文件内容
+            using var stream = SelectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            var fileBytes = memoryStream.ToArray();
+
+            // 判断文件类型
+            string fileExtension = Path.GetExtension(SelectedFile.Name).ToLower();
+
+            if (fileExtension == ".pdf")
+            {
+                // 处理PDF文件
+                ErrorMessage = "PDF识别功能开发中。建议：\n1. 将PDF页面截图后上传\n2. 或直接复制PDF中的文字到【AI智能识别】模式";
+                return;
+            }
+            else if (fileExtension == ".jpg" || fileExtension == ".jpeg" || fileExtension == ".png")
+            {
+                // 判断使用在线OCR还是离线OCR
+                if (ImportMode == "offline-ocr")
+                {
+                    // 离线OCR模式 - 使用Tesseract
+                    if (!OfflineOCR.IsAvailable())
+                    {
+                        ErrorMessage = "离线OCR服务不可用，请确保已安装语言包。下载地址：https://github.com/tesseract-ocr/tessdata";
+                        return;
+                    }
+
+                    SuccessMessage = "正在使用Tesseract识别图片...";
+                    StateHasChanged();
+
+                    // 步骤1: 使用离线OCR识别图片中的文字
+                    RecognizedText = await OfflineOCR.RecognizeImageText(fileBytes, "chi_sim+eng");
+
+                    if (string.IsNullOrWhiteSpace(RecognizedText))
+                    {
+                        ErrorMessage = "未能识别出图片中的文字，请确保图片清晰且包含文字内容。";
+                        return;
+                    }
+
+                    SuccessMessage = "文字识别完成，正在解析题目...";
+                    StateHasChanged();
+
+                    // 步骤2: 使用规则解析识别出的文字为题目
+                    ParsedQuestions = ParseQuestionsFromText(RecognizedText);
+
+                    if (ParsedQuestions.Any())
+                    {
+                        SuccessMessage = $"🔒 离线OCR成功识别 {ParsedQuestions.Count} 道题目！请在预览区域确认后点击【保存到题库】按钮。";
+                    }
+                    else
+                    {
+                        ErrorMessage = "已识别文字，但未能解析出有效的题目。识别的文字内容已显示在右侧预览区。\n提示：离线OCR使用规则解析，请确保题目格式符合要求。";
+                    }
+                }
+                else
+                {
+                    // 在线OCR模式 - 使用GPT-4 Vision OCR
+                    SuccessMessage = "正在识别图片中的文字...";
+                    StateHasChanged();
+
+                    // 确定图片格式
+                    string imageFormat = fileExtension == ".png" ? "png" : "jpeg";
+
+                    // 步骤1: OCR识别图片中的文字（使用Claude Vision API）
+                    RecognizedText = await OCRService.RecognizeImageText(fileBytes, ApiKey, imageFormat, ApiEndpoint);
+
+                    if (string.IsNullOrWhiteSpace(RecognizedText))
+                    {
+                        ErrorMessage = "未能识别出图片中的文字，请确保图片清晰且包含文字内容。";
+                        return;
+                    }
+
+                    SuccessMessage = "文字识别完成，正在解析题目...";
+                    StateHasChanged();
+
+                    // 步骤2: 使用AI解析识别出的文字为题目
+                    ParsedQuestions = await AIParser.ParseQuestionsWithAI(RecognizedText, ApiKey, "claude-3-5-sonnet-20241022", ApiEndpoint);
+
+                    if (ParsedQuestions.Any())
+                    {
+                        SuccessMessage = $"📸 成功从图片识别 {ParsedQuestions.Count} 道题目！请在预览区域确认后点击【保存到题库】按钮。";
+                    }
+                    else
+                    {
+                        ErrorMessage = "已识别文字，但未能解析出有效的题目。识别的文字内容已显示在右侧预览区。";
+                    }
+                }
+            }
+            else
+            {
+                ErrorMessage = "不支持的文件格式，请上传JPG或PNG图片";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"处理文件时出错：{ex.Message}";
+            Console.WriteLine($"File Processing Error: {ex}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private List<Question> ParseQuestionsFromText(string text)
+    {
+        var questions = new List<Question>();
+        if (string.IsNullOrWhiteSpace(text)) return questions;
+
+        // 按题目分割（支持多种题号格式）
+        var lines = text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+        Question? currentQuestion = null;
+        List<string> currentOptions = new List<string>();
+        bool inOptions = false;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            // 检测题号（1. 或 1、 或 1) 开头）
+            if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+[\.\、\)]"))
+            {
+                // 保存上一题
+                if (currentQuestion != null)
+                {
+                    FinalizeQuestion(currentQuestion, currentOptions, questions);
+                }
+
+                // 开始新题
+                currentQuestion = new Question
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Category = "导入题目",
+                    Difficulty = DifficultyLevel.Medium,
+                    CreatedAt = DateTime.Now
+                };
+                currentOptions = new List<string>();
+                inOptions = false;
+
+                // 提取题目文本（去掉题号）
+                currentQuestion.Text = System.Text.RegularExpressions.Regex.Replace(line, @"^\d+[\.\、\)]\s*", "");
+            }
+            // 检测选项（A. 或 A、 或 A) 开头）
+            else if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^[A-D][\.\、\)]"))
+            {
+                inOptions = true;
+                currentOptions.Add(line.Substring(2).Trim());
+            }
+            // 检测答案行
+            else if (line.StartsWith("答案：") || line.StartsWith("答案:"))
+            {
+                if (currentQuestion != null)
+                {
+                    currentQuestion.CorrectAnswer = line.Substring(3).Trim();
+                }
+            }
+            // 检测解析行
+            else if (line.StartsWith("解析：") || line.StartsWith("解析:"))
+            {
+                if (currentQuestion != null)
+                {
+                    currentQuestion.Explanation = line.Substring(3).Trim();
+                }
+            }
+            // 其他情况：可能是题目的延续或解析的延续
+            else if (currentQuestion != null)
+            {
+                if (!inOptions && string.IsNullOrEmpty(currentQuestion.CorrectAnswer))
+                {
+                    // 题目文本的延续
+                    currentQuestion.Text += " " + line;
+                }
+                else if (!string.IsNullOrEmpty(currentQuestion.Explanation))
+                {
+                    // 解析的延续
+                    currentQuestion.Explanation += " " + line;
+                }
+            }
+        }
+
+        // 保存最后一题
+        if (currentQuestion != null)
+        {
+            FinalizeQuestion(currentQuestion, currentOptions, questions);
+        }
+
+        return questions;
+    }
+
+    private void FinalizeQuestion(Question question, List<string> options, List<Question> questions)
+    {
+        // 判断是选择题还是填空题
+        if (options.Any())
+        {
+            question.Type = QuestionType.MultipleChoice;
+            question.Options = options.ToList();
+        }
+        else
+        {
+            question.Type = QuestionType.FillInBlank;
+        }
+
+        // 设置默认值
+        if (string.IsNullOrWhiteSpace(question.Explanation))
+        {
+            question.Explanation = "暂无解析";
+        }
+
+        // 验证必填字段
+        if (!string.IsNullOrWhiteSpace(question.Text) && !string.IsNullOrWhiteSpace(question.CorrectAnswer))
+        {
+            questions.Add(question);
+        }
+    }
+}

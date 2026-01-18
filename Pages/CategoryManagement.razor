@@ -1,0 +1,515 @@
+@page "/category-management"
+@using MathExamWeb.Data
+@using MathExamWeb.Data.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@inject MathExamDbContext DbContext
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<div class="container">
+    <div class="exam-card">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="display-6">📂 分类管理</h1>
+            <div>
+                <button class="btn btn-success me-2" @onclick="ShowAddModal">
+                    ➕ 添加分类
+                </button>
+                <button class="btn btn-warning me-2" @onclick="ImportFromQuestions">
+                    📥 从题库导入
+                </button>
+                <a href="/question-bank" class="btn btn-outline-secondary">
+                    ← 返回题库
+                </a>
+            </div>
+        </div>
+
+        <!-- 筛选区域 -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label">📖 科目</label>
+                        <select class="form-select" @bind="FilterSubject" @bind:after="LoadCategories">
+                            <option value="">全部</option>
+                            <option value="chinese">语文</option>
+                            <option value="math">数学</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">📊 状态</label>
+                        <select class="form-select" @bind="FilterStatus" @bind:after="LoadCategories">
+                            <option value="">全部</option>
+                            <option value="active">启用</option>
+                            <option value="inactive">禁用</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分类列表 -->
+        @if (IsLoading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">加载中...</span>
+                </div>
+            </div>
+        }
+        else if (!Categories.Any())
+        {
+            <div class="alert alert-info text-center">
+                📭 暂无分类数据
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 80px;">排序</th>
+                            <th style="width: 100px;">科目</th>
+                            <th style="width: 150px;">分组</th>
+                            <th>分类名称</th>
+                            <th style="width: 80px;">状态</th>
+                            <th style="width: 150px;">创建时间</th>
+                            <th style="width: 180px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var category in Categories)
+                        {
+                            <tr>
+                                <td>@category.SortOrder</td>
+                                <td>
+                                    <span class="badge bg-@(category.Subject == "math" ? "primary" : "success")">
+                                        @(category.Subject == "math" ? "数学" : "语文")
+                                    </span>
+                                </td>
+                                <td>@category.GroupName</td>
+                                <td style="white-space: nowrap;"><strong>@category.Name</strong></td>
+                                <td>
+                                    @if (category.IsActive)
+                                    {
+                                        <span class="badge bg-success">启用</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">禁用</span>
+                                    }
+                                </td>
+                                <td>@category.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary me-1" @onclick="() => ShowEditModal(category)">
+                                        ✏️ 编辑
+                                    </button>
+                                    @if (category.IsActive)
+                                    {
+                                        <button class="btn btn-sm btn-outline-warning me-1" @onclick="() => ToggleStatus(category)">
+                                            🔒 禁用
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-success me-1" @onclick="() => ToggleStatus(category)">
+                                            🔓 启用
+                                        </button>
+                                    }
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteCategory(category)">
+                                        🗑️ 删除
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="alert alert-info">
+                📊 共 <strong>@Categories.Count</strong> 个分类
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(SuccessMessage))
+        {
+            <div class="alert alert-success alert-dismissible fade show mt-3" role="alert">
+                ✅ @SuccessMessage
+                <button type="button" class="btn-close" @onclick="() => SuccessMessage = string.Empty"></button>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(ErrorMessage))
+        {
+            <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
+                ❌ @ErrorMessage
+                <button type="button" class="btn-close" @onclick="() => ErrorMessage = string.Empty"></button>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- 添加/编辑分类模态框 -->
+@if (ShowModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(IsEditing ? "✏️ 编辑分类" : "➕ 添加分类")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">科目 <span class="text-danger">*</span></label>
+                        <select class="form-select" @bind="EditingCategory.Subject">
+                            <option value="">请选择</option>
+                            <option value="chinese">语文</option>
+                            <option value="math">数学</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">分类名称 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" @bind="EditingCategory.Name"
+                               placeholder="例如：加法、古诗词等" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">分组名称 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" @bind="EditingCategory.GroupName"
+                               placeholder="例如：基础运算、古诗文等" />
+                        <small class="text-muted">同一分组的分类会显示在一起</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">排序序号</label>
+                        <input type="number" class="form-control" @bind="EditingCategory.SortOrder"
+                               placeholder="数字越小越靠前" />
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="EditingCategory.IsActive" id="isActive">
+                            <label class="form-check-label" for="isActive">
+                                启用此分类
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModal">取消</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveCategory">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CategoryEntity> Categories = new();
+    private string FilterSubject = "";
+    private string FilterStatus = "";
+    private bool IsLoading = false;
+    private string SuccessMessage = "";
+    private string ErrorMessage = "";
+
+    private bool ShowModal = false;
+    private bool IsEditing = false;
+    private CategoryEntity EditingCategory = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCategories();
+    }
+
+    private async Task LoadCategories()
+    {
+        IsLoading = true;
+        try
+        {
+            var query = DbContext.Categories.AsQueryable();
+
+            if (!string.IsNullOrEmpty(FilterSubject))
+            {
+                query = query.Where(c => c.Subject == FilterSubject);
+            }
+
+            if (FilterStatus == "active")
+            {
+                query = query.Where(c => c.IsActive);
+            }
+            else if (FilterStatus == "inactive")
+            {
+                query = query.Where(c => !c.IsActive);
+            }
+
+            Categories = await query.OrderBy(c => c.Subject).ThenBy(c => c.SortOrder).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"加载失败：{ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ShowAddModal()
+    {
+        IsEditing = false;
+        EditingCategory = new CategoryEntity
+        {
+            IsActive = true,
+            SortOrder = 0
+        };
+        ShowModal = true;
+    }
+
+    private void ShowEditModal(CategoryEntity category)
+    {
+        IsEditing = true;
+        EditingCategory = new CategoryEntity
+        {
+            Id = category.Id,
+            Subject = category.Subject,
+            Name = category.Name,
+            GroupName = category.GroupName,
+            SortOrder = category.SortOrder,
+            IsActive = category.IsActive,
+            CreatedAt = category.CreatedAt
+        };
+        ShowModal = true;
+    }
+
+    private void CloseModal()
+    {
+        ShowModal = false;
+        EditingCategory = new();
+    }
+
+    private async Task SaveCategory()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(EditingCategory.Subject))
+            {
+                ErrorMessage = "请选择科目";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(EditingCategory.Name))
+            {
+                ErrorMessage = "请输入分类名称";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(EditingCategory.GroupName))
+            {
+                ErrorMessage = "请输入分组名称";
+                return;
+            }
+
+            if (IsEditing)
+            {
+                var existing = await DbContext.Categories.FindAsync(EditingCategory.Id);
+                if (existing != null)
+                {
+                    existing.Subject = EditingCategory.Subject;
+                    existing.Name = EditingCategory.Name;
+                    existing.GroupName = EditingCategory.GroupName;
+                    existing.SortOrder = EditingCategory.SortOrder;
+                    existing.IsActive = EditingCategory.IsActive;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                EditingCategory.CreatedAt = DateTime.UtcNow;
+                EditingCategory.UpdatedAt = DateTime.UtcNow;
+                await DbContext.Categories.AddAsync(EditingCategory);
+            }
+
+            await DbContext.SaveChangesAsync();
+            SuccessMessage = IsEditing ? "分类更新成功" : "分类添加成功";
+            CloseModal();
+            await LoadCategories();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"保存失败：{ex.Message}";
+        }
+    }
+
+    private async Task ToggleStatus(CategoryEntity category)
+    {
+        try
+        {
+            var existing = await DbContext.Categories.FindAsync(category.Id);
+            if (existing != null)
+            {
+                existing.IsActive = !existing.IsActive;
+                existing.UpdatedAt = DateTime.UtcNow;
+                await DbContext.SaveChangesAsync();
+                SuccessMessage = existing.IsActive ? "分类已启用" : "分类已禁用";
+                await LoadCategories();
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"操作失败：{ex.Message}";
+        }
+    }
+
+    private async Task DeleteCategory(CategoryEntity category)
+    {
+        try
+        {
+            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", $"确定要删除分类 {category.Name} 吗？");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            var existing = await DbContext.Categories.FindAsync(category.Id);
+            if (existing != null)
+            {
+                DbContext.Categories.Remove(existing);
+                await DbContext.SaveChangesAsync();
+                SuccessMessage = "分类删除成功";
+                await LoadCategories();
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"删除失败：{ex.Message}";
+        }
+    }
+
+    private async Task ImportFromQuestions()
+    {
+        try
+        {
+            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm",
+                "将从题库中汇总所有分类并导入到分类字典表中（已存在的不会重复导入）。确定继续吗？");
+
+            if (!confirmed)
+            {
+                return;
+            }
+
+            IsLoading = true;
+
+            // 从题库表中汇总所有不同的科目和分类组合
+            var questionCategories = await DbContext.Questions
+                .Where(q => !string.IsNullOrEmpty(q.Category) && !string.IsNullOrEmpty(q.Subject))
+                .Select(q => new { q.Subject, q.Category })
+                .Distinct()
+                .ToListAsync();
+
+            int addedCount = 0;
+            int skippedCount = 0;
+
+            foreach (var item in questionCategories)
+            {
+                // 检查是否已存在
+                var exists = await DbContext.Categories
+                    .AnyAsync(c => c.Subject == item.Subject && c.Name == item.Category);
+
+                if (!exists)
+                {
+                    // 推断分组名称
+                    string groupName = InferGroupName(item.Category);
+
+                    // 计算排序序号（同一分组内的最大序号+1）
+                    var existingCategories = await DbContext.Categories
+                        .Where(c => c.Subject == item.Subject && c.GroupName == groupName)
+                        .Select(c => c.SortOrder)
+                        .ToListAsync();
+
+                    int sortOrder = existingCategories.Any() ? existingCategories.Max() + 1 : 1;
+
+                    var newCategory = new CategoryEntity
+                    {
+                        Subject = item.Subject,
+                        Name = item.Category,
+                        GroupName = groupName,
+                        SortOrder = sortOrder,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+
+                    await DbContext.Categories.AddAsync(newCategory);
+                    addedCount++;
+                }
+                else
+                {
+                    skippedCount++;
+                }
+            }
+
+            await DbContext.SaveChangesAsync();
+            SuccessMessage = $"导入完成！新增 {addedCount} 个分类，跳过 {skippedCount} 个已存在的分类。";
+            await LoadCategories();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"导入失败：{ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private string InferGroupName(string categoryName)
+    {
+        // 根据分类名称推断分组
+        if (categoryName.Contains("加法") || categoryName.Contains("减法") ||
+            categoryName.Contains("乘法") || categoryName.Contains("除法") ||
+            categoryName.Contains("混合运算"))
+        {
+            return "基础运算";
+        }
+        else if (categoryName.Contains("分数"))
+        {
+            return "分数运算";
+        }
+        else if (categoryName.Contains("应用题"))
+        {
+            return "应用题";
+        }
+        else if (categoryName.Contains("百分数") || categoryName.Contains("小数") ||
+                 categoryName.Contains("几何") || categoryName.Contains("统计") ||
+                 categoryName.Contains("比和比例"))
+        {
+            return "其他";
+        }
+        else if (categoryName.Contains("古诗") || categoryName.Contains("名句") ||
+                 categoryName.Contains("文言文"))
+        {
+            return "古诗文";
+        }
+        else if (categoryName.Contains("近义词") || categoryName.Contains("反义词") ||
+                 categoryName.Contains("成语") || categoryName.Contains("词语"))
+        {
+            return "词汇";
+        }
+        else if (categoryName.Contains("修辞") || categoryName.Contains("病句") ||
+                 categoryName.Contains("标点") || categoryName.Contains("句式"))
+        {
+            return "语法";
+        }
+        else if (categoryName.Contains("阅读"))
+        {
+            return "阅读理解";
+        }
+        else
+        {
+            return "其他";
+        }
+    }
+}

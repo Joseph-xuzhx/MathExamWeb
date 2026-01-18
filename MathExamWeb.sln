@@ -1,9 +1,9 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
+VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MathExamWeb", "MathExamWeb.csproj", "{8B3E9A1C-7F2D-4E3B-8C1A-9D5E6F4A2B3C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MathExamWeb", "MathExamWeb.csproj", "{33672157-9096-95A0-BFD8-7F3322EC5622}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -11,9 +11,15 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{8B3E9A1C-7F2D-4E3B-8C1A-9D5E6F4A2B3C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{8B3E9A1C-7F2D-4E3B-8C1A-9D5E6F4A2B3C}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{8B3E9A1C-7F2D-4E3B-8C1A-9D5E6F4A2B3C}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{8B3E9A1C-7F2D-4E3B-8C1A-9D5E6F4A2B3C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{33672157-9096-95A0-BFD8-7F3322EC5622}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{33672157-9096-95A0-BFD8-7F3322EC5622}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{33672157-9096-95A0-BFD8-7F3322EC5622}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{33672157-9096-95A0-BFD8-7F3322EC5622}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A724208C-77A5-4E5F-A755-F49A92BAD57E}
 	EndGlobalSection
 EndGlobal
